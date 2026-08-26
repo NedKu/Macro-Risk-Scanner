@@ -1,0 +1,8 @@
+{
+  "name": "Remix 宏觀風險掃描儀 (Macro Risk Scanner)",
+  "description": "每日 17 項關鍵市場風險指標追蹤、警報點計算與AI實時市場掃描報告生成器",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
