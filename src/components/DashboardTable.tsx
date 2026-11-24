@@ -171,7 +171,9 @@ export const DashboardTable: React.FC<DashboardTableProps> = ({ indicators }) =>
                       {item.value}
                     </td>
                     <td className="py-2 px-3 font-mono">
-                      {renderTrendIcon(item.trend)}
+                      {item.value === '資料未取得'
+                        ? <span className="text-[#666666] font-mono text-xs">未確認</span>
+                        : renderTrendIcon(item.trend)}
                     </td>
                     <td className="py-2 px-3 font-mono text-[#777777] whitespace-nowrap">
                       {item.date}

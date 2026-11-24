@@ -1,17 +1,44 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { GoogleGenAI } from '@google/genai';
 import { initialScanReport } from './src/data/mockScanData';
 import { ScanReport } from './src/types';
+import { runCodexScan } from './codexScan';
+import { runPublicScan, type ManualValues } from './publicScan';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || (process.env.GEMINI_API_KEY ? '0.0.0.0' : '127.0.0.1');
+let codexScanInProgress = false;
+let publicScanInProgress = false;
+let manualValues: ManualValues = {};
 
-// In-memory persistent scan history array
 let scanHistory: ScanReport[] = [initialScanReport];
+const historyPath = path.join(process.cwd(), '.local', 'scan-history.json');
+const manualPath = path.join(process.cwd(), '.local', 'manual-values.json');
+
+async function loadHistory() {
+  try {
+    const saved = JSON.parse(await readFile(historyPath, 'utf8'));
+    if (Array.isArray(saved) && saved.length > 0 &&
+        saved.every(report => report && typeof report.date === 'string' && Array.isArray(report.indicators))) {
+      scanHistory = saved;
+    }
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') console.error('Could not load scan history:', error);
+  }
+  try { manualValues = JSON.parse(await readFile(manualPath, 'utf8')); }
+  catch (error: any) { if (error?.code !== 'ENOENT') console.error('Could not load manual values:', error); }
+}
+
+async function saveHistory() {
+  await mkdir(path.dirname(historyPath), { recursive: true });
+  await writeFile(historyPath, JSON.stringify(scanHistory, null, 2), 'utf8');
+}
 
 // Health endpoint
 app.get('/api/health', (_req, res) => {
@@ -29,8 +56,38 @@ app.get('/api/scan/latest', (_req, res) => {
   res.json({ success: true, scan: latest });
 });
 
+function isLocalRequest(req: express.Request) {
+  return ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '') &&
+    [`localhost:${PORT}`, `127.0.0.1:${PORT}`].includes(req.get('host') || '') &&
+    (!req.get('origin') || [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`].includes(req.get('origin')!));
+}
+
+app.get('/api/manual', (req, res) => {
+  if (!isLocalRequest(req)) { res.status(403).json({ success: false }); return; }
+  res.json({ success: true, values: manualValues });
+});
+app.post('/api/manual', async (req, res) => {
+  if (!isLocalRequest(req)) {
+    res.status(403).json({ success: false, message: '手動補值僅供本機使用。' }); return;
+  }
+  const { id, value, date, source } = req.body || {};
+  if (!initialScanReport.indicators.some(item => item.id === id) ||
+      ![value, date, source].every(x => typeof x === 'string' && x.trim() && x.length <= 300) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) || date > new Date().toISOString().slice(0, 10)) {
+    res.status(400).json({ success: false, message: '請提供有效的指標、數值、日期與來源。' }); return;
+  }
+  const numeric = Number(value);
+  manualValues[id] = { value: value.trim(), date: date.trim(), source: source.trim(),
+    numValue: Number.isFinite(numeric) ? numeric : undefined };
+  try {
+    await mkdir(path.dirname(manualPath), { recursive: true });
+    await writeFile(manualPath, JSON.stringify(manualValues, null, 2), 'utf8');
+    res.json({ success: true, values: manualValues });
+  } catch (error) { res.status(500).json({ success: false, message: '手動數值儲存失敗。' }); }
+});
+
 // Save a scan report
-app.post('/api/history', (req, res) => {
+app.post('/api/history', async (req, res) => {
   const report: ScanReport = req.body;
   if (!report || !report.date || !Array.isArray(report.indicators)) {
     res.status(400).json({ success: false, error: 'Invalid scan report format' });
@@ -45,21 +102,63 @@ app.post('/api/history', (req, res) => {
     scanHistory.push(report);
   }
 
-  res.json({ success: true, count: scanHistory.length, scan: report });
+  try {
+    await saveHistory();
+    res.json({ success: true, count: scanHistory.length, scan: report });
+  } catch (error) {
+    console.error('Could not save scan history:', error);
+    res.status(500).json({ success: false, message: '無法儲存掃描歷史。' });
+  }
 });
 
 // Trigger an AI Realtime Scan using Gemini with Search Grounding
 app.post('/api/scan/run', async (req, res) => {
   try {
+    if (req.body?.mode !== 'ai') {
+      if (publicScanInProgress) { res.status(409).json({ success: false, message: '公開資料掃描正在進行。' }); return; }
+      publicScanInProgress = true;
+      try {
+        const scan = await runPublicScan(manualValues);
+        scanHistory.push(scan);
+        await saveHistory();
+        res.json({ success: true, source: 'public', scan,
+          message: `✅ 公開資料掃描完成：${scan.indicators.filter(item => item.value !== '資料未取得').length}/17 項有讀值。` });
+      } catch (error) {
+        console.error('Public scan failed:', error);
+        res.status(503).json({ success: false, message: '公開資料掃描失敗；原有報告未更新。' });
+      } finally { publicScanInProgress = false; }
+      return;
+    }
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      // Return latest cached or initial scan with warning
-      res.json({
-        success: true,
-        source: 'cached',
-        scan: scanHistory[scanHistory.length - 1] || initialScanReport,
-        message: 'GEMINI_API_KEY not configured. Returned latest cached macro scan dataset.'
-      });
+      const host = req.get('host');
+      const origin = req.get('origin');
+      const allowedHosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`];
+      const localAddress = req.socket.remoteAddress;
+      if (!host || !allowedHosts.includes(host) ||
+          !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(localAddress || '') ||
+          (origin && !allowedHosts.some(allowed => origin === `http://${allowed}`))) {
+        res.status(403).json({ success: false, message: 'Codex 掃描僅供本機網頁使用。' });
+        return;
+      }
+      if (codexScanInProgress) {
+        res.status(409).json({ success: false, message: '掃描正在進行，請稍候。' });
+        return;
+      }
+      codexScanInProgress = true;
+      try {
+        const scan = await runCodexScan();
+        scanHistory.push(scan);
+        await saveHistory();
+        res.json({ success: true, source: 'codex_search', scan,
+          message: '✅ Codex 網路檢索掃描完成；請留意各指標的資料日期與來源。' });
+      } catch (error) {
+        console.error('Codex scan failed:', error);
+        res.status(503).json({ success: false,
+          message: 'Codex 掃描未完成；原有報告未更新。請確認 Codex CLI 已登入，並檢查伺服器日誌。' });
+      } finally {
+        codexScanInProgress = false;
+      }
       return;
     }
 
@@ -131,21 +230,17 @@ Return valid JSON matching the schema provided.`;
       console.log('AI response parsing failed, falling back to base report with current date');
     }
 
-    if (parsed && parsed.indicators && Array.isArray(parsed.indicators)) {
+    if (parsed && Array.isArray(parsed.indicators) && parsed.indicators.length === initialScanReport.indicators.length &&
+        Array.isArray(parsed.hardThresholds) && parsed.hardThresholds.length === initialScanReport.hardThresholds.length) {
       const finalScan: ScanReport = {
         ...initialScanReport,
         ...parsed,
-        indicators: Array.isArray(parsed.indicators) && parsed.indicators.length > 0
-          ? parsed.indicators
-          : initialScanReport.indicators,
-        hardThresholds: Array.isArray(parsed.hardThresholds) && parsed.hardThresholds.length > 0
-          ? parsed.hardThresholds
-          : initialScanReport.hardThresholds,
         date: todayStr,
       };
       
       // Save to history
       scanHistory.push(finalScan);
+      await saveHistory();
 
       res.json({
         success: true,
@@ -156,31 +251,15 @@ Return valid JSON matching the schema provided.`;
       return;
     }
 
-    // Fallback to initial scan report with updated date
-    const updatedInitial: ScanReport = {
-      ...initialScanReport,
-      date: todayStr,
-    };
-    scanHistory.push(updatedInitial);
-
-    res.json({
-      success: true,
-      source: 'fallback',
-      scan: updatedInitial,
-      rawAiResponse: responseText.slice(0, 500),
+    res.status(502).json({
+      success: false,
+      message: 'Gemini 未返回完整掃描報告；原有報告未更新。',
     });
 
   } catch (error: any) {
     const errorMessage = typeof error === 'string' ? error : JSON.stringify(error);
     console.error('Error running AI scan:', errorMessage);
     
-    const todayStr = new Date().toISOString().split('T')[0];
-    const latestScan = scanHistory[scanHistory.length - 1] || initialScanReport;
-    const updatedScan: ScanReport = {
-      ...latestScan,
-      date: todayStr,
-    };
-
     // Helper to check for quota error in various possible error structures
     const isQuotaError = 
       error?.status === 429 || 
@@ -189,20 +268,18 @@ Return valid JSON matching the schema provided.`;
       errorMessage.includes('RESOURCE_EXHAUSTED') ||
       (error?.error?.code === 429);
 
-    // Return 200 with fallback scan data so app UI never breaks when API quota is exhausted
-    res.json({
-      success: true,
-      source: 'quota_fallback',
-      scan: updatedScan,
+    res.status(503).json({
+      success: false,
       message: isQuotaError
-        ? '⚠️ AI 檢索次數已達當日頻率上限，系統已自動為您加載最新歷史數據基準。'
-        : '⚠️ AI 檢索服務暫時繁忙，系統已為您加載最新基準掃描報告。',
+        ? '⚠️ Gemini 已達使用上限；原有報告未更新。'
+        : '⚠️ Gemini 掃描失敗；原有報告未更新。',
     });
   }
 });
 
 // Vite dev server vs static serving
 async function setupServer() {
+  await loadHistory();
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -218,8 +295,8 @@ async function setupServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server listening on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`Server listening on http://${HOST}:${PORT}`);
   });
 }
 

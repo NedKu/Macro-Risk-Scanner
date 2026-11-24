@@ -51,7 +51,7 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ report }) => {
               {report.shortTermUnwarned} <span className="text-xs font-normal text-[#666666]">/ {report.shortTermTotal} 未警報</span>
             </div>
             <span className="text-xs font-mono text-emerald-400 font-semibold">
-              {shortRatio}% 安全率
+              {shortRatio}% 正常比例
             </span>
           </div>
 
@@ -90,7 +90,7 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ report }) => {
               {report.midTermUnwarned} <span className="text-xs font-normal text-[#666666]">/ {report.midTermTotal} 未警報</span>
             </div>
             <span className="text-xs font-mono text-amber-400 font-semibold">
-              {midRatio}% 安全率
+              {midRatio}% 正常比例
             </span>
           </div>
 
@@ -127,7 +127,7 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ report }) => {
               {report.longTermUnwarned} <span className="text-xs font-normal text-[#666666]">/ {report.longTermTotal} 未警報</span>
             </div>
             <span className="text-xs font-mono text-rose-400 font-semibold">
-              {longRatio}% 安全率
+              {longRatio}% 正常比例
             </span>
           </div>
 

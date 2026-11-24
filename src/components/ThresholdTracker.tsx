@@ -18,7 +18,7 @@ export const ThresholdTracker: React.FC<ThresholdTrackerProps> = ({ report }) =>
       case 'warning':
         return (
           <span className="inline-flex items-center gap-1 font-mono font-bold text-[10px] text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/50">
-            <AlertTriangle className="w-3 h-3" /> ⚠️ 觀察中
+            <AlertTriangle className="w-3 h-3" /> ⚠️ 待確認／觀察
           </span>
         );
       case 'no':
@@ -47,7 +47,7 @@ export const ThresholdTracker: React.FC<ThresholdTrackerProps> = ({ report }) =>
             <tr className="text-[#555555] border-b border-[#1A1A1A] uppercase tracking-wider font-mono text-[10px]">
               <th className="py-2 px-3 font-medium">觸發條件</th>
               <th className="py-2 px-3 font-medium">硬性警戒閾值</th>
-              <th className="py-2 px-3 font-medium">今日實測狀態</th>
+              <th className="py-2 px-3 font-medium">最近可得讀值</th>
               <th className="py-2 px-3 text-center font-medium">狀態</th>
               <th className="py-2 px-3 font-medium">備註說明</th>
             </tr>
@@ -92,6 +92,7 @@ export const ThresholdTracker: React.FC<ThresholdTrackerProps> = ({ report }) =>
             <div className="text-xs font-bold flex items-center gap-2">
               <span>今日硬閾值觸發總數：</span>
               <span className="font-mono text-sm text-amber-400 font-bold">{report.hardTriggersCount} / 7 項觸發</span>
+              <span className="text-[11px] text-[#888]">{report.hardThresholds.filter(item => item.status === 'warning').length} 項待確認</span>
             </div>
             <p className="text-[11px] text-[#666666] mt-0.5">
               紀律要求：必須同時觸發 ≥ 3 項硬閾值，才達到「開始分批賣出」之系統指示。

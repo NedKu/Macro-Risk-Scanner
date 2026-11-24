@@ -5,6 +5,8 @@ import { ScanReport } from '../types';
 interface HeaderProps {
   report: ScanReport;
   onRunScan: () => void;
+  onRunAiScan: () => void;
+  onOpenManual: () => void;
   isScanning: boolean;
   onExportMarkdown: () => void;
   onCopyReport: () => void;
@@ -16,6 +18,8 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   report,
   onRunScan,
+  onRunAiScan,
+  onOpenManual,
   isScanning,
   onExportMarkdown,
   onCopyReport,
@@ -55,7 +59,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-[#0A0A0B] border border-[#1A1A1A] rounded-lg text-xs font-mono text-[#AAA]">
               <Calendar className="w-3.5 h-3.5 text-emerald-500" />
-              <span className="text-[11px] text-[#666] uppercase tracking-wider mr-1">資料更新</span>
+              <span className="text-[11px] text-[#666] uppercase tracking-wider mr-1">掃描日期</span>
               <span className="text-white font-semibold">{report.date}</span>
             </div>
 
@@ -67,14 +71,23 @@ export const Header: React.FC<HeaderProps> = ({
               {isScanning ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-200" />
-                  <span>AI 檢索掃描中...</span>
+                  <span>掃描中...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-                  <span>執行 AI 實時掃描</span>
+                  <span>更新公開資料</span>
                 </>
               )}
+            </button>
+
+            <button onClick={onRunAiScan} disabled={isScanning}
+              className="px-3.5 py-1.5 bg-[#111111] hover:bg-[#1A1A1A] disabled:opacity-50 text-[#CCC] border border-[#333] rounded-lg text-xs cursor-pointer">
+              AI 進階掃描
+            </button>
+            <button onClick={onOpenManual}
+              className="px-3.5 py-1.5 bg-[#111111] hover:bg-[#1A1A1A] text-[#CCC] border border-[#333] rounded-lg text-xs cursor-pointer">
+              補充來源數值
             </button>
 
             <button

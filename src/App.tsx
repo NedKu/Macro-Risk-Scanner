@@ -11,6 +11,7 @@ import { ThresholdTracker } from './components/ThresholdTracker';
 import { WeeklyModals } from './components/WeeklyModals';
 import { DataNotesFooter } from './components/DataNotesFooter';
 import { generateReportMarkdown } from './utils/markdownGenerator';
+import { ManualInputs } from './components/ManualInputs';
 
 export default function App() {
   const [report, setReport] = useState<ScanReport>(initialScanReport);
@@ -18,6 +19,7 @@ export default function App() {
   const [isCopied, setIsCopied] = useState(false);
   const [showWeeklyModal, setShowWeeklyModal] = useState(false);
   const [showThursdayModal, setShowThursdayModal] = useState(false);
+  const [showManualModal, setShowManualModal] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,14 +36,15 @@ export default function App() {
       });
   }, []);
 
-  const handleRunScan = async () => {
+  const handleRunScan = async (mode: 'public' | 'ai' = 'public') => {
     setIsScanning(true);
-    setNotification('正在通過 Gemini AI 與網絡接地檢索 17 項最新指標數據...');
+    setNotification(mode === 'ai' ? 'AI 正在檢索 17 項指標；完成前請保持頁面開啟...' : '正在更新公開來源資料...');
 
     try {
       const res = await fetch('/api/scan/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
       });
       const data = await res.json();
 
@@ -49,14 +52,14 @@ export default function App() {
         setReport(data.scan);
         setNotification(data.message || '✅ 實時風險掃描成功完成！數據已更新。');
       } else {
-        setNotification('⚠️ AI 掃描未返回全新數據，已加載當前最新數據基準。');
+        setNotification(data.message || '⚠️ 掃描未完成；目前報告未更新。');
       }
     } catch (err) {
       console.error(err);
-      setNotification('❌ 網絡連線異常，已加載最近一次本地掃描報告。');
+      setNotification('❌ 無法連線至本機掃描服務；目前報告未更新。');
     } finally {
       setIsScanning(false);
-      setTimeout(() => setNotification(null), 5000);
+      setTimeout(() => setNotification(null), 10000);
     }
   };
 
@@ -144,7 +147,9 @@ export default function App() {
       {/* Header Bar */}
       <Header
         report={report}
-        onRunScan={handleRunScan}
+        onRunScan={() => handleRunScan('public')}
+        onRunAiScan={() => handleRunScan('ai')}
+        onOpenManual={() => setShowManualModal(true)}
         isScanning={isScanning}
         onExportMarkdown={handleExportMarkdown}
         onCopyReport={handleCopyReport}
@@ -185,6 +190,8 @@ export default function App() {
         onCloseWeekly={() => setShowWeeklyModal(false)}
         onCloseThursday={() => setShowThursdayModal(false)}
       />
+      <ManualInputs open={showManualModal} report={report} onClose={() => setShowManualModal(false)}
+        onSaved={() => { setShowManualModal(false); void handleRunScan('public'); }} />
     </div>
   );
 }
